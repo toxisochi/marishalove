@@ -4,8 +4,9 @@ on:
   push:
     branches: [main]
     paths:
-      - '**.jsx'
-      - '**.css'
+      - 'index.source.html'
+      - '*.jsx'
+      - '*.css'
       - 'music.js'
       - 'package.json'
       - 'package-lock.json'
@@ -16,7 +17,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: publish-website
+  group: marishalove-publish
   cancel-in-progress: true
 
 jobs:
@@ -35,17 +36,31 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build for GitHub Pages
+      - name: Restore Vite source entry
+        run: cp index.source.html index.html
+
+      - name: Build website from React source
         run: npx vite build --base=./ --assetsDir=.
 
-      - name: Update published files
+      - name: Verify that the birthday letter is in the built site
+        shell: bash
         run: |
+          test -f dist/index.html
+          grep -qF 'Я очень рад, что ты появилась в моей жизни' dist/index-*.js
+          grep -qF 'надеюсь, сегодня увидимся с тобой' dist/index-*.js
+          grep -qF 'type="module"' dist/index.html
+
+      - name: Publish built files to GitHub Pages root
+        shell: bash
+        run: |
+          git rm -f --ignore-unmatch index-*.js index-*.css
           cp dist/index.html ./index.html
           cp dist/index-*.js dist/index-*.css ./
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add index.html index-*.js index-*.css
+          touch .nojekyll
+          git add -A -- index.html .nojekyll 'index-*.js' 'index-*.css'
           if ! git diff --cached --quiet; then
-            git commit -m "Publish updated birthday website"
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -m "Publish verified React website"
             git push
           fi
