@@ -1,130 +1,120 @@
-let context
-let master
-let timer
+// Render the original procedurally composed melody as WAV and play it via
+// HTMLAudioElement. iOS Safari can mute Web Audio oscillators on the speaker
+// while still allowing explicitly initiated media playback.
+const RATE = 22050
+const BAR = 4.5
+const chords = [[50,57,62,66,69],[47,54,59,62,66],[43,50,55,59,66],[45,52,57,62,64]]
+const hz = n => 440 * 2 ** ((n - 69) / 12)
+
+let player = null
+let musicUrl = null
+let chimeUrl = null
 let playing = false
-let starting = false
-let bar = 0
-let nextBar = 0
 
-const progression = [[50,57,62,66,69],[47,54,59,62,66],[43,50,55,59,66],[45,52,57,62,64]]
-const pitch = note => 440 * 2 ** ((note - 69) / 12)
-const AudioContextClass = () => window.AudioContext || window.webkitAudioContext
-
-function voice(note, start, duration, volume, pad = false) {
-  if (!context || !master || context.state !== 'running') return
-  const source = context.createOscillator()
-  const gain = context.createGain()
-  source.type = pad ? 'triangle' : 'sine'
-  source.frequency.value = pitch(note)
-  gain.gain.setValueAtTime(.0001, start)
-  gain.gain.exponentialRampToValueAtTime(volume, start + (pad ? .85 : .014))
-  gain.gain.exponentialRampToValueAtTime(.0001, start + duration)
-  source.connect(gain).connect(master)
-  source.start(start)
-  source.stop(start + duration + .05)
-  source.onended = () => { source.disconnect(); gain.disconnect() }
-}
-
-function schedule() {
-  if (!playing || !context || context.state !== 'running') return
-  const now = context.currentTime
-  if (nextBar < now) nextBar = now + .04
-  if (nextBar > now + .35) return
-  const chord = progression[bar % progression.length]
-  chord.slice(0,3).forEach(note => voice(note, nextBar, 4.8, .075, true))
-  const melody = bar % 2 ? [4,2,3] : [2,4,3]
-  melody.forEach((index, i) => {
-    const start = nextBar + .23 + [0,1.3,2.85][i]
-    voice(chord[index]+12,start,1.8,.17)
-    voice(chord[index]+24,start,.45,.035)
-    voice(chord[index]+12,start+.27,1.7,.04)
-  })
-  bar++
-  nextBar += 4.5
-}
-
-function stopMusic() {
-  playing = false
-  starting = false
-  clearInterval(timer)
-  timer = undefined
-  const old = context
-  const oldMaster = master
-  context = undefined
-  master = undefined
-  if (old && oldMaster) {
-    try { oldMaster.gain.setTargetAtTime(.0001, old.currentTime, .07) } catch {}
-    setTimeout(() => old.close().catch(() => {}), 400)
+function addNote(buffer, note, start, duration, loudness, pad = false) {
+  const startSample = Math.floor(start * RATE)
+  const length = Math.floor(duration * RATE)
+  const step = 2 * Math.PI * hz(note) / RATE
+  const attack = pad ? .75 : .02
+  const release = pad ? .8 : .48
+  for (let i = 0; i < length; i++) {
+    const t = i / RATE
+    const envelope = Math.min(1, t / attack, (duration - t) / release)
+    const phase = step * i
+    const wave = pad ? .7 * Math.sin(phase) + .3 * Math.sin(phase * 2) : Math.sin(phase)
+    let offset = startSample + i
+    if (offset >= buffer.length) offset %= buffer.length
+    buffer[offset] += wave * Math.max(0, envelope) * loudness
   }
+}
+
+function wavUrl(samples) {
+  const bytes = new ArrayBuffer(44 + samples.length * 2)
+  const view = new DataView(bytes)
+  const string = (at, value) => {
+    for (let i = 0; i < value.length; i++) view.setUint8(at + i, value.charCodeAt(i))
+  }
+  string(0, 'RIFF')
+  view.setUint32(4, bytes.byteLength - 8, true)
+  string(8, 'WAVE')
+  string(12, 'fmt ')
+  view.setUint32(16, 16, true)
+  view.setUint16(20, 1, true) // PCM
+  view.setUint16(22, 1, true) // mono: compatible with phone speakers
+  view.setUint32(24, RATE, true)
+  view.setUint32(28, RATE * 2, true)
+  view.setUint16(32, 2, true)
+  view.setUint16(34, 16, true)
+  string(36, 'data')
+  view.setUint32(40, samples.length * 2, true)
+  for (let i = 0; i < samples.length; i++) {
+    const v = Math.tanh(samples[i] * 2.7) * .82
+    view.setInt16(44 + i * 2, Math.round(v * 32767), true)
+  }
+  return URL.createObjectURL(new Blob([bytes], {type:'audio/wav'}))
+}
+
+function getMusicUrl() {
+  if (musicUrl) return musicUrl
+  const samples = new Float32Array(Math.floor(BAR * chords.length * RATE))
+  chords.forEach((chord, bar) => {
+    const start = bar * BAR
+    chord.slice(0,3).forEach(note => addNote(samples,note,start,4.8,.067,true))
+    const melody = bar % 2 ? [4,2,3] : [2,4,3]
+    melody.forEach((index,i) => {
+      const t = start + .23 + [0,1.3,2.85][i]
+      addNote(samples,chord[index]+12,t,1.8,.13)
+      addNote(samples,chord[index]+24,t,.45,.025)
+      addNote(samples,chord[index]+12,t+.27,1.7,.028)
+    })
+  })
+  musicUrl = wavUrl(samples)
+  return musicUrl
+}
+
+function getChimeUrl() {
+  if (chimeUrl) return chimeUrl
+  const samples = new Float32Array(Math.floor(2.1 * RATE))
+  ;[78,81,85].forEach((note,i) => addNote(samples,note,i*.16,1.6,.17))
+  chimeUrl = wavUrl(samples)
+  return chimeUrl
 }
 
 export async function toggleMusic() {
-  if (playing || starting) {
-    stopMusic()
+  if (playing) {
+    player?.pause()
+    playing = false
     return false
   }
-  const Audio = AudioContextClass()
-  if (!Audio) return false
-  starting = true
-  let audio
   try {
-    // Called directly from the sound button's tap/click handler.
-    audio = new Audio()
-    context = audio
-    master = audio.createGain()
-    master.gain.value = .58
-    master.connect(audio.destination)
-
-    // Start a quiet oscillator synchronously inside the tap handler.
-    // This unlocks Web Audio on iOS Safari and some in-app browsers.
-    const unlock = audio.createOscillator()
-    const unlockGain = audio.createGain()
-    unlockGain.gain.value = .0001
-    unlock.connect(unlockGain).connect(master)
-    unlock.start()
-    unlock.stop(audio.currentTime + .06)
-    unlock.onended = () => { unlock.disconnect(); unlockGain.disconnect() }
-
-    await Promise.race([
-      audio.resume(),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('Audio unlock timed out')), 3500))
-    ])
-    if (context !== audio || !starting) {
-      await audio.close().catch(() => {})
-      return false
+    if (!player) {
+      player = new Audio(getMusicUrl())
+      player.loop = true
+      player.preload = 'auto'
+      player.volume = .9
     }
-    if (audio.state !== 'running') {
-      stopMusic()
-      return false
-    }
-    starting = false
+    // Invoke play directly in the tap handler, before any await.
+    await player.play()
     playing = true
-    bar = 0
-    nextBar = audio.currentTime + .04
-    schedule()
-    // Gentle audible confirmation, so a phone user knows music started.
-    voice(81, audio.currentTime + .04, .55, .09)
-    timer = setInterval(schedule, 180)
     return true
   } catch {
-    stopMusic()
+    playing = false
     return false
   }
 }
 
 export async function resumeMusic() {
-  if (!playing || !context) return false
+  if (!playing || !player) return false
+  if (!player.paused) return true
   try {
-    if (context.state !== 'running') await context.resume()
-    if (context.state !== 'running') return false
-    nextBar = context.currentTime + .04
-    schedule()
+    await player.play()
     return true
   } catch { return false }
 }
 
 export function chime() {
-  if (!playing || !context || context.state !== 'running') return
-  const start = context.currentTime + .015
-  ;[78,81,85].forEach((note,i) => voice(note,start+i*.16,1.7,.13))
+  if (!playing) return
+  const sound = new Audio(getChimeUrl())
+  sound.volume = .65
+  sound.play().catch(() => {})
 }
