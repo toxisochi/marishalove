@@ -10,6 +10,7 @@ function Orbit({size=32}){return <svg width={size} height={size} viewBox="0 0 40
 function App(){
 const [phase,P]=useState('intro'),[line,L]=useState(0),[sound,S]=useState(false),[reset,R]=useState(0);
 const [soundPending,setSoundPending]=useState(false);
+const manualSoundChoice=useRef(false);
 const [soundNeedsTap,setSoundNeedsTap]=useState(false);
 const automaticSound=useRef(true);
 useEffect(()=>{if(phase==='intro'){let a=setTimeout(()=>L(1),2400),b=setTimeout(()=>L(2),5100),c=setTimeout(()=>P('explore'),7900);return ()=>[a,b,c].forEach(clearTimeout)}if(phase==='enter'){let t=setTimeout(()=>P('letter'),2800);return ()=>clearTimeout(t)}},[phase]);
