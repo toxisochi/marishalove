@@ -80,27 +80,48 @@ function getChimeUrl() {
   return chimeUrl
 }
 
-export async function toggleMusic() {
-  if (playing) {
-    player?.pause()
-    playing = false
-    return false
+let stopVersion = 0
+
+function getPlayer() {
+  if (!player) {
+    player = new Audio(getMusicUrl())
+    player.loop = true
+    player.preload = 'auto'
+    player.volume = .9
   }
+  return player
+}
+
+export function isMusicPlaying() {
+  return playing && player !== null && !player.paused
+}
+
+// Try immediately on page load. If autoplay is blocked, calling this again
+// synchronously from the user's first touch/click unlocks it on mobile.
+export async function startMusic() {
+  if (isMusicPlaying()) return true
+  const generation = stopVersion
   try {
-    if (!player) {
-      player = new Audio(getMusicUrl())
-      player.loop = true
-      player.preload = 'auto'
-      player.volume = .9
-    }
-    // Invoke play directly in the tap handler, before any await.
-    await player.play()
+    const audio = getPlayer()
+    await audio.play()
+    if (generation !== stopVersion) return false
     playing = true
     return true
   } catch {
-    playing = false
+    if (generation === stopVersion) playing = false
     return false
   }
+}
+
+export function stopMusic() {
+  stopVersion += 1
+  player?.pause()
+  playing = false
+  return false
+}
+
+export function toggleMusic() {
+  return isMusicPlaying() ? Promise.resolve(stopMusic()) : startMusic()
 }
 
 export async function resumeMusic() {
