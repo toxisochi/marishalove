@@ -15,6 +15,7 @@ on:
 
 permissions:
   contents: write
+  pages: write
 
 concurrency:
   group: marishalove-publish-v2
@@ -52,6 +53,7 @@ jobs:
           grep -qF 'type="module"' dist/index.html
 
       - name: Publish built files to GitHub Pages root
+        id: publish
         shell: bash
         run: |
           git rm -f --ignore-unmatch index-*.js index-*.css
@@ -64,4 +66,24 @@ jobs:
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git commit -m "Publish verified React website"
             git push
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Request GitHub Pages to deploy the generated files
+        if: steps.publish.outputs.changed == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          status=$(curl --silent --show-error --location \
+            --output /tmp/pages-build.json --write-out "%{http_code}" \
+            --request POST \
+            --header "Accept: application/vnd.github+json" \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            --header "X-GitHub-Api-Version: 2026-03-10" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/pages/builds")
+          echo "Pages build request: HTTP $status"
+          cat /tmp/pages-build.json
+          test "$status" = "201"
