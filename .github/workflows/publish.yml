@@ -17,12 +17,13 @@ permissions:
   contents: write
 
 concurrency:
-  group: marishalove-publish
+  group: marishalove-publish-v2
   cancel-in-progress: true
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 8
     steps:
       - name: Checkout
         uses: actions/checkout@v4
