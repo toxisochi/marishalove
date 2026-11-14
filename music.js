@@ -75,8 +75,20 @@ export async function toggleMusic() {
     master.gain.value = .58
     master.connect(audio.destination)
 
-    // iOS Safari requires resume() after a real user gesture.
-    await audio.resume()
+    // Start a quiet oscillator synchronously inside the tap handler.
+    // This unlocks Web Audio on iOS Safari and some in-app browsers.
+    const unlock = audio.createOscillator()
+    const unlockGain = audio.createGain()
+    unlockGain.gain.value = .0001
+    unlock.connect(unlockGain).connect(master)
+    unlock.start()
+    unlock.stop(audio.currentTime + .06)
+    unlock.onended = () => { unlock.disconnect(); unlockGain.disconnect() }
+
+    await Promise.race([
+      audio.resume(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Audio unlock timed out')), 3500))
+    ])
     if (context !== audio || !starting) {
       await audio.close().catch(() => {})
       return false
@@ -90,6 +102,8 @@ export async function toggleMusic() {
     bar = 0
     nextBar = audio.currentTime + .04
     schedule()
+    // Gentle audible confirmation, so a phone user knows music started.
+    voice(81, audio.currentTime + .04, .55, .09)
     timer = setInterval(schedule, 180)
     return true
   } catch {
